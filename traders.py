@@ -14,30 +14,25 @@ from templates import (
     rebalance_message,
     research_tool,
 )
-from mcp_params import trader_mcp_server_params, researcher_mcp_server_params
+from mcp_params import trader_mcp_server_params
 
 load_dotenv(override=True)
 
-deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
-google_api_key = os.getenv("GOOGLE_API_KEY")
-grok_api_key = os.getenv("GROK_API_KEY")
-openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
 
-DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
-GROK_BASE_URL = "https://api.x.ai/v1"
-GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+open_api_key = os.getenv("OPENAI_API_KEY",)
+
+
 
 MAX_TURNS = 30
 
-openrouter_client = AsyncOpenAI(base_url=OPENROUTER_BASE_URL, api_key=openrouter_api_key)
-deepseek_client = AsyncOpenAI(base_url=DEEPSEEK_BASE_URL, api_key=deepseek_api_key)
-grok_client = AsyncOpenAI(base_url=GROK_BASE_URL, api_key=grok_api_key)
-gemini_client = AsyncOpenAI(base_url=GEMINI_BASE_URL, api_key=google_api_key)
 
+
+openai_client = AsyncOpenAI(
+    api_key= open_api_key
+)
 
 def get_model(model_name: str):
-    if "/" in model_name:
+    if "/" in model_name and "ollama" not in model_name:
         return OpenAIChatCompletionsModel(model=model_name, openai_client=openrouter_client)
     elif "deepseek" in model_name:
         return OpenAIChatCompletionsModel(model=model_name, openai_client=deepseek_client)
@@ -45,8 +40,12 @@ def get_model(model_name: str):
         return OpenAIChatCompletionsModel(model=model_name, openai_client=grok_client)
     elif "gemini" in model_name:
         return OpenAIChatCompletionsModel(model=model_name, openai_client=gemini_client)
-    else:
-        return model_name
+    elif "gpt" in model_name:
+       return OpenAIChatCompletionsModel(
+        model=model_name,
+        openai_client=openai_client
+    )
+    
 
 
 async def get_researcher(mcp_servers, model_name) -> Agent:
@@ -65,7 +64,7 @@ async def get_researcher_tool(mcp_servers, model_name) -> Tool:
 
 
 class Trader:
-    def __init__(self, name: str, lastname="Trader", model_name="gpt-4o-mini"):
+    def __init__(self, name: str, lastname="Trader", model_name="ollama/tinyllama"):
         self.name = name
         self.lastname = lastname
         self.agent = None
@@ -98,24 +97,38 @@ class Trader:
             if self.do_trade
             else rebalance_message(self.name, strategy, account)
         )
-        await Runner.run(self.agent, message, max_turns=MAX_TURNS)
+        message = "Give one short buy or sell decision only."
+        print(f"Running trader: {self.name}")
+        print(message)
+        self.agent.tools = []
+        print("Agent started thinking....")
+        response = await openai_client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+        {
+            "role": "user",
+            "content": message
+        }
+        ],
+        max_tokens=20
+        )
+
+        print(f"\n==== {self.name} RESULT ====")
+        print(response.choices[0].message.content)
+        print("===========================\n")
+
+        
 
     async def run_with_mcp_servers(self):
         async with AsyncExitStack() as stack:
+            print(trader_mcp_server_params)
             trader_mcp_servers = [
                 await stack.enter_async_context(
                     MCPServerStdio(params, client_session_timeout_seconds=120)
                 )
                 for params in trader_mcp_server_params
             ]
-            async with AsyncExitStack() as stack:
-                researcher_mcp_servers = [
-                    await stack.enter_async_context(
-                        MCPServerStdio(params, client_session_timeout_seconds=120)
-                    )
-                    for params in researcher_mcp_server_params(self.name)
-                ]
-                await self.run_agent(trader_mcp_servers, researcher_mcp_servers)
+            await self.run_agent(trader_mcp_servers, [])
 
     async def run_with_trace(self):
         trace_name = f"{self.name}-trading" if self.do_trade else f"{self.name}-rebalancing"
@@ -127,5 +140,7 @@ class Trader:
         try:
             await self.run_with_trace()
         except Exception as e:
-            print(f"Error running trader {self.name}: {e}")
+            import traceback
+            print(f"Error running trader {self.name}:")
+            traceback.print_exc()
         self.do_trade = not self.do_trade

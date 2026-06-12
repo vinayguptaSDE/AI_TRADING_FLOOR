@@ -13,4 +13,4 @@ async def lookup_share_price(symbol: str) -> float:
     return get_share_price(symbol)
 
 if __name__ == "__main__":
-    mcp.run(transport='stdio')
+    mcp.run(transport="stdio")

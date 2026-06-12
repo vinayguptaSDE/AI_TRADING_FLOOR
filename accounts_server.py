@@ -67,4 +67,5 @@ async def read_strategy_resource(name: str) -> str:
     return account.get_strategy()
 
 if __name__ == "__main__":
-    mcp.run(transport='stdio')
+    mcp.run(transport="stdio")
+    
